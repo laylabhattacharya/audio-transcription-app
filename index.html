@@ -162,6 +162,9 @@
 
         async function startRecording() {
             try {
+                // Clear any previous audio element
+                currentAudioElement = null;
+                
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 mediaRecorder = new MediaRecorder(stream);
                 
@@ -251,6 +254,8 @@
             }, 2000);
         }
 
+        let currentAudioElement = null;
+
         async function sendAudioToServer() {
             const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
             console.log('Audio blob size:', audioBlob.size, 'bytes');
@@ -262,20 +267,22 @@
             const audioUrl = URL.createObjectURL(audioBlob);
             console.log('Audio URL:', audioUrl);
             
-            // Add audio playback for debugging
-            const debugAudio = new Audio(audioUrl);
-            debugAudio.controls = true;
-            debugAudio.style.display = 'block';
-            debugAudio.style.margin = '10px 0';
+            // Create audio element and store reference
+            currentAudioElement = new Audio(audioUrl);
+            currentAudioElement.controls = true;
+            currentAudioElement.style.display = 'block';
+            currentAudioElement.style.margin = '10px 0';
+            currentAudioElement.style.width = '100%';
+            currentAudioElement.style.maxWidth = '300px';
             
             // Add to status div temporarily
             statusDiv.innerHTML = `
                 <div>Audio blob size: ${audioBlob.size} bytes</div>
                 <div>Audio chunks: ${audioChunks.length}</div>
                 <div>Debug playback:</div>
-                <audio controls src="${audioUrl}" style="width: 100%; max-width: 300px;"></audio>
-                <div>Transcribing...</div>
             `;
+            statusDiv.appendChild(currentAudioElement);
+            statusDiv.innerHTML += '<div>Transcribing...</div>';
             
             const formData = new FormData();
             formData.append('audio', audioBlob, 'recording.webm');
@@ -293,13 +300,27 @@
                 const result = await response.json();
                 displayResults(result);
                 
-                statusDiv.textContent = 'Transcription complete!';
+                // Update status to show completion while preserving audio element
+                if (currentAudioElement) {
+                    statusDiv.innerHTML = '<div>Transcription complete! Recorded audio:</div>';
+                    statusDiv.appendChild(currentAudioElement);
+                } else {
+                    statusDiv.textContent = 'Transcription complete!';
+                }
                 statusDiv.className = 'status success';
                 
             } catch (error) {
                 console.error('Error transcribing audio:', error);
-                statusDiv.textContent = 'Error: Failed to transcribe audio. Please try again.';
-                statusDiv.className = 'status error';
+                
+                // Update status to show error while preserving audio element
+                if (currentAudioElement) {
+                    statusDiv.innerHTML = '<div>Error: Failed to transcribe audio. Please try again. Recorded audio:</div>';
+                    statusDiv.appendChild(currentAudioElement);
+                    statusDiv.className = 'status error';
+                } else {
+                    statusDiv.textContent = 'Error: Failed to transcribe audio. Please try again.';
+                    statusDiv.className = 'status error';
+                }
             }
         }
 
