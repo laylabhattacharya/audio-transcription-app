@@ -72,23 +72,49 @@ def transcribe_audio():
     audio_file = request.files['audio']
     audio_data = audio_file.read()
     
+    print(f"Received audio data: {len(audio_data)} bytes")
+    print(f"Audio file name: {audio_file.filename}")
+    print(f"Audio content type: {audio_file.content_type}")
+    
     # Convert audio data to numpy array
-    # The browser sends audio as a blob, we need to handle it as raw PCM data
+    # The browser sends audio as a blob, try different decoding approaches
+    audio_np = None
+    
+    # First, try raw PCM decoding (most likely for Web Audio API)
     try:
-        # Try to decode as WAV first
-        import wave
-        import io
-        wav_buffer = io.BytesIO(audio_data)
-        with wave.open(wav_buffer, 'rb') as wav_file:
-            audio_np = np.frombuffer(wav_file.readframes(wav_file.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0
-    except:
-        # If WAV decoding fails, assume it's raw PCM data
         audio_np = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
+        print(f"Raw PCM decoding successful, shape: {audio_np.shape}")
+    except Exception as e:
+        print(f"Raw PCM decoding failed: {e}")
+    
+    # If raw PCM fails, try WAV decoding
+    if audio_np is None:
+        try:
+            import wave
+            import io
+            wav_buffer = io.BytesIO(audio_data)
+            with wave.open(wav_buffer, 'rb') as wav_file:
+                audio_np = np.frombuffer(wav_file.readframes(wav_file.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0
+            print("WAV decoding successful")
+        except Exception as e:
+            print(f"WAV decoding failed: {e}")
+    
+    # If all else fails, return error
+    if audio_np is None:
+        return jsonify({'error': 'Could not decode audio data'}), 400
+    
+    print(f"Audio numpy array shape: {audio_np.shape}")
+    print(f"Audio numpy array dtype: {audio_np.dtype}")
+    print(f"Audio numpy array min/max: {audio_np.min():.6f} / {audio_np.max():.6f}")
+    print(f"Audio duration estimate: {len(audio_np) / fs:.2f} seconds")
     
     # Use Whisper to transcribe the audio to text
     result = model.transcribe(audio_np, fp16=False, without_timestamps=False)
     text = result["text"].strip()
     segments = result["segments"]
+    
+    print(f"Transcription result: '{text}'")
+    print(f"Number of segments: {len(segments)}")
     
     # Analyze pauses and commas
     pauses, commas = check_pauses(segments)

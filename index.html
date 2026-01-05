@@ -130,6 +130,10 @@
         let mediaRecorder;
         let audioChunks = [];
         let isRecording = false;
+        let audioContext;
+        let analyser;
+        let dataArray;
+        let animationId;
 
         const recordButton = document.getElementById('recordButton');
         const stopButton = document.getElementById('stopButton');
@@ -144,12 +148,25 @@
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 mediaRecorder = new MediaRecorder(stream);
                 
+                console.log('MediaRecorder created with mimeType:', mediaRecorder.mimeType);
+                
+                // Set up audio analysis
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const source = audioContext.createMediaStreamSource(stream);
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 256;
+                source.connect(analyser);
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+                
                 audioChunks = [];
                 mediaRecorder.ondataavailable = event => {
                     audioChunks.push(event.data);
                 };
                 
-                mediaRecorder.onstop = sendAudioToServer;
+                mediaRecorder.onstop = () => {
+                    cancelAnimationFrame(animationId);
+                    sendAudioToServer();
+                };
                 
                 mediaRecorder.start();
                 isRecording = true;
@@ -159,8 +176,11 @@
                 recordButton.textContent = 'Recording...';
                 stopButton.disabled = false;
                 
-                statusDiv.textContent = 'Recording... Click "Stop Recording" when finished.';
+                statusDiv.innerHTML = '<div>Recording... Click "Stop Recording" when finished.</div><div id="audioLevel">Audio level: <span id="levelValue">0</span></div>';
                 statusDiv.className = 'status';
+                
+                // Start monitoring audio levels
+                monitorAudioLevels();
                 
             } catch (error) {
                 console.error('Error accessing microphone:', error);
@@ -169,11 +189,32 @@
             }
         }
 
+        function monitorAudioLevels() {
+            if (!isRecording) return;
+            
+            analyser.getByteFrequencyData(dataArray);
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i++) {
+                sum += dataArray[i];
+            }
+            const average = sum / dataArray.length;
+            
+            document.getElementById('levelValue').textContent = average.toFixed(1);
+            
+            animationId = requestAnimationFrame(monitorAudioLevels);
+        }
+
         function stopRecording() {
             if (mediaRecorder && isRecording) {
                 mediaRecorder.stop();
                 mediaRecorder.stream.getTracks().forEach(track => track.stop());
                 isRecording = false;
+                
+                // Clean up audio context
+                if (audioContext) {
+                    audioContext.close();
+                }
+                cancelAnimationFrame(animationId);
                 
                 recordButton.disabled = false;
                 recordButton.classList.remove('recording');
@@ -186,12 +227,35 @@
         }
 
         async function sendAudioToServer() {
-            const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+            const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+            console.log('Audio blob size:', audioBlob.size, 'bytes');
+            console.log('Audio blob type:', audioBlob.type);
+            console.log('MediaRecorder mimeType:', mediaRecorder.mimeType);
+            console.log('Number of audio chunks:', audioChunks.length);
+            
+            // Create audio URL for debugging
+            const audioUrl = URL.createObjectURL(audioBlob);
+            console.log('Audio URL:', audioUrl);
+            
+            // Add audio playback for debugging
+            const debugAudio = new Audio(audioUrl);
+            debugAudio.controls = true;
+            debugAudio.style.display = 'block';
+            debugAudio.style.margin = '10px 0';
+            
+            // Add to status div temporarily
+            statusDiv.innerHTML = `
+                <div>Audio blob size: ${audioBlob.size} bytes</div>
+                <div>Audio chunks: ${audioChunks.length}</div>
+                <div>Debug playback:</div>
+                <audio controls src="${audioUrl}" style="width: 100%; max-width: 300px;"></audio>
+                <div>Transcribing...</div>
+            `;
+            
             const formData = new FormData();
-            formData.append('audio', audioBlob, 'recording.wav');
+            formData.append('audio', audioBlob, 'recording.webm');
             
             try {
-                statusDiv.textContent = 'Transcribing...';
                 const response = await fetch('/transcribe', {
                     method: 'POST',
                     body: formData
