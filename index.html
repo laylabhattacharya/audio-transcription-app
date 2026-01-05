@@ -145,6 +145,12 @@
         let recorderNode;
         let recordedChunks = [];
         let currentAudioElement = null;
+        let audioContext;
+        let analyser;
+        let dataArray;
+        let animationId;
+        let isRecording = false;
+        let currentStream = null;
 
         const recordButton = document.getElementById('recordButton');
         const stopButton = document.getElementById('stopButton');
@@ -162,6 +168,7 @@
                 currentAudioElement = null;
                 
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                currentStream = stream; // Store reference to stop later
                 
                 // Use Web Audio API for raw PCM capture instead of MediaRecorder
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -231,6 +238,12 @@
             if (isRecording) {
                 isRecording = false;
                 
+                // Stop all audio tracks
+                if (currentStream) {
+                    currentStream.getTracks().forEach(track => track.stop());
+                    currentStream = null;
+                }
+                
                 // Clean up audio context
                 if (audioContext) {
                     audioContext.close();
@@ -256,8 +269,6 @@
                 stopRecording();
             }, 2000);
         }
-
-        let currentAudioElement = null;
 
         async function sendAudioToServer() {
             // Combine all recorded chunks into a single PCM buffer
