@@ -2,3 +2,4 @@ openai-whisper
 sounddevice
 scipy
 flask
+pydub

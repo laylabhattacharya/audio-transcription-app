@@ -142,13 +142,9 @@
     </div>
 
     <script>
-        let mediaRecorder;
-        let audioChunks = [];
-        let isRecording = false;
-        let audioContext;
-        let analyser;
-        let dataArray;
-        let animationId;
+        let recorderNode;
+        let recordedChunks = [];
+        let currentAudioElement = null;
 
         const recordButton = document.getElementById('recordButton');
         const stopButton = document.getElementById('stopButton');
@@ -166,29 +162,36 @@
                 currentAudioElement = null;
                 
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                mediaRecorder = new MediaRecorder(stream);
                 
-                console.log('MediaRecorder created with mimeType:', mediaRecorder.mimeType);
-                
-                // Set up audio analysis
+                // Use Web Audio API for raw PCM capture instead of MediaRecorder
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 const source = audioContext.createMediaStreamSource(stream);
+                
+                // Create a ScriptProcessorNode for raw audio data capture
+                recorderNode = audioContext.createScriptProcessor(4096, 1, 1);
+                recorderNode.onaudioprocess = function(event) {
+                    if (isRecording) {
+                        const inputBuffer = event.inputBuffer;
+                        const inputData = inputBuffer.getChannelData(0);
+                        // Convert to 16-bit PCM
+                        const pcmData = new Int16Array(inputData.length);
+                        for (let i = 0; i < inputData.length; i++) {
+                            pcmData[i] = Math.max(-32768, Math.min(32767, inputData[i] * 32768));
+                        }
+                        recordedChunks.push(new Uint8Array(pcmData.buffer));
+                    }
+                };
+                
+                source.connect(recorderNode);
+                recorderNode.connect(audioContext.destination);
+                
+                // Set up analyser for level monitoring
                 analyser = audioContext.createAnalyser();
                 analyser.fftSize = 256;
                 source.connect(analyser);
                 dataArray = new Uint8Array(analyser.frequencyBinCount);
                 
-                audioChunks = [];
-                mediaRecorder.ondataavailable = event => {
-                    audioChunks.push(event.data);
-                };
-                
-                mediaRecorder.onstop = () => {
-                    cancelAnimationFrame(animationId);
-                    sendAudioToServer();
-                };
-                
-                mediaRecorder.start();
+                recordedChunks = [];
                 isRecording = true;
                 
                 recordButton.disabled = true;
@@ -225,9 +228,7 @@
         }
 
         function stopRecording() {
-            if (mediaRecorder && isRecording) {
-                mediaRecorder.stop();
-                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+            if (isRecording) {
                 isRecording = false;
                 
                 // Clean up audio context
@@ -243,6 +244,8 @@
                 
                 statusDiv.textContent = 'Processing audio...';
                 statusDiv.className = 'status';
+                
+                sendAudioToServer();
             }
         }
 
@@ -257,14 +260,21 @@
         let currentAudioElement = null;
 
         async function sendAudioToServer() {
-            const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
-            console.log('Audio blob size:', audioBlob.size, 'bytes');
-            console.log('Audio blob type:', audioBlob.type);
-            console.log('MediaRecorder mimeType:', mediaRecorder.mimeType);
-            console.log('Number of audio chunks:', audioChunks.length);
+            // Combine all recorded chunks into a single PCM buffer
+            const totalLength = recordedChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+            const pcmBuffer = new Uint8Array(totalLength);
+            let offset = 0;
+            for (const chunk of recordedChunks) {
+                pcmBuffer.set(chunk, offset);
+                offset += chunk.length;
+            }
             
-            // Create audio URL for debugging
-            const audioUrl = URL.createObjectURL(audioBlob);
+            console.log('PCM buffer size:', pcmBuffer.length, 'bytes');
+            console.log('Number of chunks:', recordedChunks.length);
+            
+            // Create audio URL for debugging (convert PCM to WAV for browser playback)
+            const wavBlob = createWAVBlob(pcmBuffer);
+            const audioUrl = URL.createObjectURL(wavBlob);
             console.log('Audio URL:', audioUrl);
             
             // Create audio element and store reference
@@ -277,15 +287,16 @@
             
             // Add to status div temporarily
             statusDiv.innerHTML = `
-                <div>Audio blob size: ${audioBlob.size} bytes</div>
-                <div>Audio chunks: ${audioChunks.length}</div>
+                <div>PCM buffer size: ${pcmBuffer.length} bytes</div>
+                <div>Chunks: ${recordedChunks.length}</div>
                 <div>Debug playback:</div>
             `;
             statusDiv.appendChild(currentAudioElement);
             statusDiv.innerHTML += '<div>Transcribing...</div>';
             
             const formData = new FormData();
-            formData.append('audio', audioBlob, 'recording.webm');
+            // Send raw PCM data
+            formData.append('audio', new Blob([pcmBuffer]), 'recording.pcm');
             
             try {
                 const response = await fetch('/transcribe', {
@@ -322,6 +333,48 @@
                     statusDiv.className = 'status error';
                 }
             }
+        }
+
+        // Helper function to create WAV blob from PCM data for browser playback
+        function createWAVBlob(pcmData) {
+            const sampleRate = 16000; // Assuming 16kHz
+            const numChannels = 1;
+            const bytesPerSample = 2;
+            const blockAlign = numChannels * bytesPerSample;
+            const byteRate = sampleRate * blockAlign;
+            const dataSize = pcmData.length * bytesPerSample;
+            const bufferSize = 44 + dataSize;
+            
+            const buffer = new ArrayBuffer(bufferSize);
+            const view = new DataView(buffer);
+            
+            // WAV header
+            const writeString = (offset, string) => {
+                for (let i = 0; i < string.length; i++) {
+                    view.setUint8(offset + i, string.charCodeAt(i));
+                }
+            };
+            
+            writeString(0, 'RIFF');
+            view.setUint32(4, bufferSize - 8, true);
+            writeString(8, 'WAVE');
+            writeString(12, 'fmt ');
+            view.setUint32(16, 16, true); // Subchunk1Size
+            view.setUint16(20, 1, true); // AudioFormat (PCM)
+            view.setUint16(22, numChannels, true);
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, byteRate, true);
+            view.setUint16(32, blockAlign, true);
+            view.setUint16(34, bytesPerSample * 8, true);
+            writeString(36, 'data');
+            view.setUint32(40, dataSize, true);
+            
+            // PCM data
+            for (let i = 0; i < pcmData.length; i++) {
+                view.setInt16(44 + i * 2, pcmData[i], true);
+            }
+            
+            return new Blob([buffer], { type: 'audio/wav' });
         }
 
         function displayResults(result) {

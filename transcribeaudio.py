@@ -104,31 +104,13 @@ def transcribe_audio():
     print(f"Audio content type: {audio_file.content_type}")
     
     # Convert audio data to numpy array
-    # The browser sends audio as a blob, try different decoding approaches
-    audio_np = None
-    
-    # First, try raw PCM decoding (most likely for Web Audio API)
+    # Now expecting raw PCM data from browser
     try:
         audio_np = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
         print(f"Raw PCM decoding successful, shape: {audio_np.shape}")
     except Exception as e:
-        print(f"Raw PCM decoding failed: {e}")
-    
-    # If raw PCM fails, try WAV decoding
-    if audio_np is None:
-        try:
-            import wave
-            import io
-            wav_buffer = io.BytesIO(audio_data)
-            with wave.open(wav_buffer, 'rb') as wav_file:
-                audio_np = np.frombuffer(wav_file.readframes(wav_file.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0
-            print("WAV decoding successful")
-        except Exception as e:
-            print(f"WAV decoding failed: {e}")
-    
-    # If all else fails, return error
-    if audio_np is None:
-        return jsonify({'error': 'Could not decode audio data'}), 400
+        print(f"PCM decoding failed: {e}")
+        return jsonify({'error': 'Could not decode PCM audio data'}), 400
     
     print(f"Audio numpy array shape: {audio_np.shape}")
     print(f"Audio numpy array dtype: {audio_np.dtype}")
