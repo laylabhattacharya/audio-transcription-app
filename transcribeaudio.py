@@ -51,10 +51,34 @@ def check_fillers(text):
 
 # Load the Whisper AI model for speech recognition
 # Using 'small.en' model for better accuracy on English speech
-model = whisper.load_model("small.en")
+print("Loading Whisper model...")
+try:
+    model = whisper.load_model("small.en")
+    print("Whisper model loaded successfully")
+except Exception as e:
+    print(f"Failed to load Whisper model: {e}")
+    model = None
 
 # Initialize Flask app
 app = Flask(__name__)
+
+@app.route('/test')
+def test_model():
+    if model is None:
+        return jsonify({'error': 'Model not loaded'}), 500
+    
+    # Create a simple test audio signal (1 second of 440Hz sine wave)
+    test_audio = np.sin(2 * np.pi * 440 * np.arange(16000) / 16000).astype(np.float32)
+    
+    try:
+        result = model.transcribe(test_audio, fp16=False)
+        return jsonify({
+            'model_loaded': True,
+            'test_transcription': result['text'].strip(),
+            'test_segments': len(result['segments'])
+        })
+    except Exception as e:
+        return jsonify({'error': f'Model test failed: {str(e)}'}), 500
 
 # Set audio recording parameters
 fs = 16000  # Sample rate: 16,000 samples per second (optimal for speech recognition)
@@ -66,6 +90,9 @@ def index():
 
 @app.route('/transcribe', methods=['POST'])
 def transcribe_audio():
+    if model is None:
+        return jsonify({'error': 'Whisper model not loaded'}), 500
+        
     if 'audio' not in request.files:
         return jsonify({'error': 'No audio file provided'}), 400
     
@@ -108,13 +135,72 @@ def transcribe_audio():
     print(f"Audio numpy array min/max: {audio_np.min():.6f} / {audio_np.max():.6f}")
     print(f"Audio duration estimate: {len(audio_np) / fs:.2f} seconds")
     
-    # Use Whisper to transcribe the audio to text
-    result = model.transcribe(audio_np, fp16=False, without_timestamps=False)
-    text = result["text"].strip()
-    segments = result["segments"]
+    # Validate audio data
+    if len(audio_np) == 0:
+        return jsonify({'error': 'Audio data is empty'}), 400
     
-    print(f"Transcription result: '{text}'")
-    print(f"Number of segments: {len(segments)}")
+    if audio_np.max() - audio_np.min() < 0.001:
+        print("WARNING: Audio appears to be silence or very quiet")
+        return jsonify({'error': 'Audio appears to be silence or too quiet to transcribe'}), 400
+    
+    # Ensure audio is mono and at correct sample rate
+    if len(audio_np.shape) > 1:
+        print(f"Converting stereo to mono, original shape: {audio_np.shape}")
+        audio_np = np.mean(audio_np, axis=1)  # Convert to mono
+    
+    # Check if we need to resample (Whisper expects 16kHz)
+    # For now, assume browser audio is already at 16kHz, but add logging
+    print(f"Final audio shape: {audio_np.shape}, sample rate assumed: {fs}Hz")
+    
+    # Additional validation: check for actual audio content
+    # Calculate RMS to detect if there's meaningful audio
+    rms = np.sqrt(np.mean(audio_np**2))
+    print(f"Audio RMS level: {rms:.6f}")
+    
+    if rms < 0.001:
+        print("WARNING: Audio RMS is very low, likely silence")
+        return jsonify({'error': 'Audio appears to contain no speech or is too quiet'}), 400
+    
+    # Use Whisper to transcribe the audio to text
+    print("Starting Whisper transcription...")
+    text = ""
+    segments = []
+    
+    try:
+        result = model.transcribe(audio_np, fp16=False, without_timestamps=False)
+        text = result["text"].strip()
+        segments = result["segments"]
+        
+        print(f"Whisper transcription completed")
+        print(f"Raw result text: '{result['text']}'")
+        print(f"Stripped text: '{text}'")
+        print(f"Number of segments: {len(segments)}")
+        
+        if len(segments) > 0:
+            print(f"First segment: {segments[0]}")
+            
+    except Exception as e:
+        print(f"Whisper transcription failed: {e}")
+        return jsonify({'error': f'Transcription failed: {str(e)}'}), 500
+    
+    # If transcription is empty, try with different parameters
+    if not text:
+        print("Transcription was empty, trying with different parameters...")
+        try:
+            # Try without timestamps
+            result2 = model.transcribe(audio_np, fp16=False, without_timestamps=True)
+            text2 = result2["text"].strip()
+            if text2:
+                print(f"Alternative transcription successful: '{text2}'")
+                text = text2
+                segments = []  # No segments without timestamps
+        except Exception as e2:
+            print(f"Alternative transcription also failed: {e2}")
+    
+    # Final check
+    if not text:
+        print("All transcription attempts resulted in empty text")
+        return jsonify({'error': 'No speech detected in audio'}), 400
     
     # Analyze pauses and commas
     pauses, commas = check_pauses(segments)

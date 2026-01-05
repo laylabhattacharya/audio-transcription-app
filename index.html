@@ -59,6 +59,12 @@
         #recordButton.recording:hover {
             background-color: #e68900;
         }
+        #testButton {
+            background-color: #2196F3;
+        }
+        #testButton:hover {
+            background-color: #0b7dda;
+        }
         .results {
             margin-top: 30px;
         }
@@ -96,9 +102,18 @@
         <h1>Audio Transcription App</h1>
         <p>This app records your speech and transcribes it using AI, then analyzes it for pauses, commas, and filler words.</p>
         
+        <div style="background-color: #e8f4fd; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+            <h3>Debugging Information:</h3>
+            <p><strong>Test the model:</strong> <a href="/test" target="_blank">Click here</a> to test if the Whisper model is working</p>
+            <p><strong>Check browser console</strong> (F12) for detailed audio capture logs</p>
+            <p><strong>Audio levels</strong> should show values > 0 when speaking</p>
+            <p><strong>Audio playback</strong> should let you hear what was recorded</p>
+        </div>
+        
         <div class="controls">
             <button id="recordButton">Start Recording</button>
             <button id="stopButton" disabled>Stop Recording</button>
+            <button id="testButton" style="background-color: #2196F3;">Quick Test (2s)</button>
         </div>
         
         <div id="status" class="status"></div>
@@ -137,11 +152,13 @@
 
         const recordButton = document.getElementById('recordButton');
         const stopButton = document.getElementById('stopButton');
+        const testButton = document.getElementById('testButton');
         const statusDiv = document.getElementById('status');
         const resultsDiv = document.getElementById('results');
 
         recordButton.addEventListener('click', startRecording);
         stopButton.addEventListener('click', stopRecording);
+        testButton.addEventListener('click', startTestRecording);
 
         async function startRecording() {
             try {
@@ -224,6 +241,14 @@
                 statusDiv.textContent = 'Processing audio...';
                 statusDiv.className = 'status';
             }
+        }
+
+        async function startTestRecording() {
+            // Record for only 2 seconds as a quick test
+            await startRecording();
+            setTimeout(() => {
+                stopRecording();
+            }, 2000);
         }
 
         async function sendAudioToServer() {
