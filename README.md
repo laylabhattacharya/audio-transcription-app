@@ -1,6 +1,6 @@
 # Audio Transcription App
 
-This Python application transcribes speech from the microphone to text using OpenAI's Whisper model.
+This Python application transcribes speech from the microphone to text using OpenAI's Whisper model, with both command-line and web interfaces.
 
 ## Setup
 
@@ -11,11 +11,25 @@ This Python application transcribes speech from the microphone to text using Ope
 
 ## Usage
 
-Run the script to start recording from the microphone:
+### Web Interface (Recommended)
+
+Run the Flask web server:
 
 `python transcribeaudio.py`
 
-The script will record audio for 5 seconds and transcribe your speech to text using the Whisper model. It will also analyze the transcription for pauses (gaps longer than 1 second) and filler words (like "um", "uh", "like", etc.).
+Then open your browser and go to `http://localhost:5000`
+
+Click "Start Recording" to record audio from your microphone, then "Stop Recording" when finished. The app will transcribe your speech and analyze it for pauses, commas, and filler words.
+
+### Command-Line Interface
+
+For the original command-line version, run:
+
+`python transcribeaudio.py --cli`
+
+This will record audio for 30 seconds automatically and display the results in the terminal.
+
+## Features
 
 ## Features
 

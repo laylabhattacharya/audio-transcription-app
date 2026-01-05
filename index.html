@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Transcription App</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .controls {
+            text-align: center;
+            margin: 20px 0;
+        }
+        button {
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            padding: 15px 32px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 4px 2px;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #recordButton {
+            background-color: #f44336;
+        }
+        #recordButton:hover {
+            background-color: #da190b;
+        }
+        #recordButton.recording {
+            background-color: #ff9800;
+        }
+        #recordButton.recording:hover {
+            background-color: #e68900;
+        }
+        .results {
+            margin-top: 30px;
+        }
+        .result-section {
+            margin-bottom: 20px;
+            padding: 15px;
+            border-left: 4px solid #4CAF50;
+            background-color: #f9f9f9;
+        }
+        .result-section h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        .pause-item, .comma-item, .filler-item {
+            margin: 5px 0;
+            padding: 5px;
+            background-color: white;
+            border-radius: 3px;
+        }
+        .status {
+            text-align: center;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .error {
+            color: #f44336;
+        }
+        .success {
+            color: #4CAF50;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Audio Transcription App</h1>
+        <p>This app records your speech and transcribes it using AI, then analyzes it for pauses, commas, and filler words.</p>
+        
+        <div class="controls">
+            <button id="recordButton">Start Recording</button>
+            <button id="stopButton" disabled>Stop Recording</button>
+        </div>
+        
+        <div id="status" class="status"></div>
+        
+        <div id="results" class="results" style="display: none;">
+            <div class="result-section">
+                <h3>Transcription</h3>
+                <p id="transcription"></p>
+            </div>
+            
+            <div class="result-section">
+                <h3>Detected Pauses</h3>
+                <div id="pauses"></div>
+            </div>
+            
+            <div class="result-section">
+                <h3>Detected Commas (Potential Short Pauses)</h3>
+                <div id="commas"></div>
+            </div>
+            
+            <div class="result-section">
+                <h3>Filler Words</h3>
+                <div id="fillers"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
+
+        const recordButton = document.getElementById('recordButton');
+        const stopButton = document.getElementById('stopButton');
+        const statusDiv = document.getElementById('status');
+        const resultsDiv = document.getElementById('results');
+
+        recordButton.addEventListener('click', startRecording);
+        stopButton.addEventListener('click', stopRecording);
+
+        async function startRecording() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                
+                audioChunks = [];
+                mediaRecorder.ondataavailable = event => {
+                    audioChunks.push(event.data);
+                };
+                
+                mediaRecorder.onstop = sendAudioToServer;
+                
+                mediaRecorder.start();
+                isRecording = true;
+                
+                recordButton.disabled = true;
+                recordButton.classList.add('recording');
+                recordButton.textContent = 'Recording...';
+                stopButton.disabled = false;
+                
+                statusDiv.textContent = 'Recording... Click "Stop Recording" when finished.';
+                statusDiv.className = 'status';
+                
+            } catch (error) {
+                console.error('Error accessing microphone:', error);
+                statusDiv.textContent = 'Error: Could not access microphone. Please check permissions.';
+                statusDiv.className = 'status error';
+            }
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && isRecording) {
+                mediaRecorder.stop();
+                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+                isRecording = false;
+                
+                recordButton.disabled = false;
+                recordButton.classList.remove('recording');
+                recordButton.textContent = 'Start Recording';
+                stopButton.disabled = true;
+                
+                statusDiv.textContent = 'Processing audio...';
+                statusDiv.className = 'status';
+            }
+        }
+
+        async function sendAudioToServer() {
+            const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+            const formData = new FormData();
+            formData.append('audio', audioBlob, 'recording.wav');
+            
+            try {
+                statusDiv.textContent = 'Transcribing...';
+                const response = await fetch('/transcribe', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const result = await response.json();
+                displayResults(result);
+                
+                statusDiv.textContent = 'Transcription complete!';
+                statusDiv.className = 'status success';
+                
+            } catch (error) {
+                console.error('Error transcribing audio:', error);
+                statusDiv.textContent = 'Error: Failed to transcribe audio. Please try again.';
+                statusDiv.className = 'status error';
+            }
+        }
+
+        function displayResults(result) {
+            // Display transcription
+            document.getElementById('transcription').textContent = result.transcription || 'No transcription available';
+            
+            // Display pauses
+            const pausesDiv = document.getElementById('pauses');
+            pausesDiv.innerHTML = '';
+            if (result.pauses && result.pauses.length > 0) {
+                result.pauses.forEach(pause => {
+                    const pauseItem = document.createElement('div');
+                    pauseItem.className = 'pause-item';
+                    pauseItem.textContent = `Pause from ${pause.end_prev.toFixed(2)}s to ${pause.start_next.toFixed(2)}s (duration: ${pause.duration.toFixed(2)}s)`;
+                    pausesDiv.appendChild(pauseItem);
+                });
+            } else {
+                pausesDiv.textContent = 'No significant pauses detected.';
+            }
+            
+            // Display commas
+            const commasDiv = document.getElementById('commas');
+            commasDiv.innerHTML = '';
+            if (result.commas && result.commas.length > 0) {
+                result.commas.forEach(comma => {
+                    const commaItem = document.createElement('div');
+                    commaItem.className = 'comma-item';
+                    commaItem.textContent = `Comma in: "${comma.text}" at ${comma.start_time.toFixed(2)}s`;
+                    commasDiv.appendChild(commaItem);
+                });
+            } else {
+                commasDiv.textContent = 'No commas detected.';
+            }
+            
+            // Display fillers
+            const fillersDiv = document.getElementById('fillers');
+            fillersDiv.innerHTML = '';
+            if (result.fillers && result.fillers.length > 0) {
+                result.fillers.forEach(filler => {
+                    const fillerItem = document.createElement('div');
+                    fillerItem.className = 'filler-item';
+                    fillerItem.textContent = `'${filler.word}': ${filler.count} time(s)`;
+                    fillersDiv.appendChild(fillerItem);
+                });
+            } else {
+                fillersDiv.textContent = 'No filler words detected.';
+            }
+            
+            resultsDiv.style.display = 'block';
+        }
+    </script>
+</body>
+</html>
