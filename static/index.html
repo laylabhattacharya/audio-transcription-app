@@ -59,12 +59,7 @@
         #recordButton.recording:hover {
             background-color: #e68900;
         }
-        #testButton {
-            background-color: #2196F3;
-        }
-        #testButton:hover {
-            background-color: #0b7dda;
-        }
+
         .results {
             margin-top: 30px;
         }
@@ -105,7 +100,6 @@
         <div class="controls">
             <button id="recordButton">Start Recording</button>
             <button id="stopButton" disabled>Stop Recording</button>
-            <button id="testButton" style="background-color: #2196F3;">Quick Test (2s)</button>
         </div>
         
         <div id="status" class="status"></div>
@@ -156,7 +150,6 @@
 
         const recordButton = document.getElementById('recordButton');
         const stopButton = document.getElementById('stopButton');
-        const testButton = document.getElementById('testButton');
         const statusDiv = document.getElementById('status');
         const resultsDiv = document.getElementById('results');
 
@@ -171,7 +164,6 @@
             startRecording();
         });
         stopButton.addEventListener('click', stopRecording);
-        testButton.addEventListener('click', startTestRecording);
 
         async function startRecording() {
             console.log('startRecording called');
@@ -245,7 +237,7 @@
             } catch (error) {
                 console.error('Error accessing microphone:', error.textContent);
                 console.log('Showing error message to user');
-                statusDiv.textContent = error.message; // 'Error: Could not access microphone. Please check permissions and try again.';
+                statusDiv.textContent = error.message; 
                 statusDiv.className = 'status error';
             }
         }
@@ -298,13 +290,7 @@
             }
         }
 
-        async function startTestRecording() {
-            // Record for only 2 seconds as a quick test
-            await startRecording();
-            setTimeout(() => {
-                stopRecording();
-            }, 2000);
-        }
+
 
         async function sendAudioToServer() {
             const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
@@ -358,11 +344,11 @@
                 
                 // Update status to show error while preserving audio element
                 if (currentAudioElement) {
-                    statusDiv.innerHTML = '<div>Error: Failed to transcribe audio. Please try again. Recorded audio:</div>';
+                    statusDiv.innerHTML = '<div>Error: Sorry I didn\'t catch that. Please try again. Recorded audio:</div>';
                     statusDiv.appendChild(currentAudioElement);
                     statusDiv.className = 'status error';
                 } else {
-                    statusDiv.textContent = 'Error: Failed to transcribe audio. Please try again.';
+                    statusDiv.textContent = 'Error: Sorry I didn\'t catch that. Please try again.';
                     statusDiv.className = 'status error';
                 }
             }
