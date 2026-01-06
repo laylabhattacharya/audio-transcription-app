@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Transcription App</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .controls {
+            text-align: center;
+            margin: 20px 0;
+        }
+        button {
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            padding: 15px 32px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 4px 2px;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #recordButton {
+            background-color: #f44336;
+        }
+        #recordButton:hover {
+            background-color: #da190b;
+        }
+        #recordButton.recording {
+            background-color: #ff9800;
+        }
+        #recordButton.recording:hover {
+            background-color: #e68900;
+        }
+        #testButton {
+            background-color: #2196F3;
+        }
+        #testButton:hover {
+            background-color: #0b7dda;
+        }
+        .results {
+            margin-top: 30px;
+        }
+        .result-section {
+            margin-bottom: 20px;
+            padding: 15px;
+            border-left: 4px solid #4CAF50;
+            background-color: #f9f9f9;
+        }
+        .result-section h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        .pause-item, .comma-item, .filler-item {
+            margin: 5px 0;
+            padding: 5px;
+            background-color: white;
+            border-radius: 3px;
+        }
+        .status {
+            text-align: center;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .error {
+            color: #f44336;
+        }
+        .success {
+            color: #4CAF50;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Audio Transcription Apps</h1>
+        <p>This app records your speech and transcribes it using AI, then analyzes it for pauses, commas, and filler words.</p>
+        
+        <div style="background-color: #e8f4fd; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+            <h3>Debugging Information:</h3>
+            <p><strong>Test the model:</strong> <a href="/test" target="_blank">Click here</a> to test if the Whisper model is working</p>
+            <p><strong>Check browser console</strong> (F12) for detailed audio capture logs</p>
+            <p><strong>Audio levels</strong> should show values > 0 when speaking</p>
+            <p><strong>Audio playback</strong> should let you hear what was recorded</p>
+        </div>
+        
+        <div class="controls">
+            <button id="recordButton">Start Recording</button>
+            <button id="stopButton" disabled>Stop Recording</button>
+            <button id="testButton" style="background-color: #2196F3;">Quick Test (2s)</button>
+        </div>
+        
+        <div id="status" class="status"></div>
+        
+        <div id="results" class="results" style="display: none;">
+            <div class="result-section">
+                <h3>Transcription</h3>
+                <div id="transcription"></div>
+            </div>
+            
+            <div class="result-section">
+                <h3>Detected Pauses</h3>
+                <div id="pauses"></div>
+            </div>
+            
+            <div class="result-section">
+                <h3>Detected Commas (Potential Short Pauses)</h3>
+                <div id="commas"></div>
+            </div>
+            
+            <div class="result-section">
+                <h3>Filler Words</h3>
+                <div id="fillers"></div>
+            </div>
+            
+            <div class="result-section">
+                <h3>Repeated Words</h3>
+                <div id="repeatedWords"></div>
+            </div>
+            
+            <div class="result-section">
+                <h3>Repeated Phrases</h3>
+                <div id="repeatedPhrases"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentAudioElement = null;
+        let audioContext;
+        let analyser;
+        let dataArray;
+        let animationId;
+        let isRecording = false;
+        let currentStream = null;
+        let audioChunks = [];
+        let mediaRecorder = null;
+
+        const recordButton = document.getElementById('recordButton');
+        const stopButton = document.getElementById('stopButton');
+        const testButton = document.getElementById('testButton');
+        const statusDiv = document.getElementById('status');
+        const resultsDiv = document.getElementById('results');
+
+        // Clear any previous status on page load
+        statusDiv.textContent = '';
+        statusDiv.className = 'status';
+
+        recordButton.addEventListener('click', () => {
+            // Clear any previous status messages before starting
+            statusDiv.textContent = '';
+            statusDiv.className = 'status';
+            startRecording();
+        });
+        stopButton.addEventListener('click', stopRecording);
+        testButton.addEventListener('click', startTestRecording);
+
+        async function startRecording() {
+            console.log('startRecording called');
+            try {
+                // Clear any previous audio element
+                currentAudioElement = null;
+                
+                console.log('Requesting microphone access...');
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                currentStream = stream; // Store reference to stop later
+                console.log('Microphone access granted successfully');
+                
+                // Clear any previous error messages and show success
+                statusDiv.innerHTML = '<div style="color: #4CAF50; font-weight: bold;">✅ Microphone access granted! Starting recording...</div>';
+                statusDiv.className = 'status success';
+                
+                // Small delay to show the success message
+                await new Promise(resolve => setTimeout(resolve, 800));
+                
+                // Try to use MediaRecorder with proper format for raw audio
+                let mimeType = '';
+                if (MediaRecorder.isTypeSupported('audio/wav')) {
+                    mimeType = 'audio/wav';
+                } else if (MediaRecorder.isTypeSupported('audio/webm;codecs=pcm')) {
+                    mimeType = 'audio/webm;codecs=pcm';
+                } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+                    mimeType = 'audio/webm';
+                }
+                
+                console.log('Using MediaRecorder with mimeType:', mimeType);
+                
+                mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+                console.log('MediaRecorder actual mimeType:', mediaRecorder.mimeType);
+                
+                audioChunks = [];
+                mediaRecorder.ondataavailable = event => {
+                    if (event.data.size > 0) {
+                        audioChunks.push(event.data);
+                    }
+                };
+                
+                mediaRecorder.onstop = () => {
+                    sendAudioToServer();
+                };
+                
+                mediaRecorder.start();
+                isRecording = true;
+                
+                recordButton.disabled = true;
+                recordButton.classList.add('recording');
+                recordButton.textContent = 'Recording...';
+                stopButton.disabled = false;
+                
+                statusDiv.innerHTML = '<div>Recording... Click "Stop Recording" when finished.</div><div id="audioLevel">Audio level: <span id="levelValue">0</span></div>';
+                statusDiv.className = 'status';
+                
+                // Start monitoring audio levels
+                monitorAudioLevels();
+                
+            } catch (error) {
+                console.error('Error accessing microphone:', error);
+                console.log('Showing error message to user');
+                statusDiv.textContent = 'Error: Could not access microphone. Please check permissions and try again.';
+                statusDiv.className = 'status error';
+            }
+        }
+
+        function monitorAudioLevels() {
+            if (!isRecording) return;
+            
+            analyser.getByteFrequencyData(dataArray);
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i++) {
+                sum += dataArray[i];
+            }
+            const average = sum / dataArray.length;
+            
+            document.getElementById('levelValue').textContent = average.toFixed(1);
+            
+            animationId = requestAnimationFrame(monitorAudioLevels);
+        }
+
+        function stopRecording() {
+            if (isRecording) {
+                isRecording = false;
+                
+                // Stop MediaRecorder
+                if (mediaRecorder && mediaRecorder.state === 'recording') {
+                    mediaRecorder.stop();
+                }
+                
+                // Stop all audio tracks
+                if (currentStream) {
+                    currentStream.getTracks().forEach(track => track.stop());
+                    currentStream = null;
+                }
+                
+                recordButton.disabled = false;
+                recordButton.classList.remove('recording');
+                recordButton.textContent = 'Start Recording';
+                stopButton.disabled = true;
+                
+                statusDiv.textContent = 'Processing audio...';
+                statusDiv.className = 'status';
+            }
+        }
+
+        async function startTestRecording() {
+            // Record for only 2 seconds as a quick test
+            await startRecording();
+            setTimeout(() => {
+                stopRecording();
+            }, 2000);
+        }
+
+        async function sendAudioToServer() {
+            const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+            console.log('Audio blob size:', audioBlob.size, 'bytes');
+            console.log('Audio blob type:', audioBlob.type);
+            console.log('MediaRecorder mimeType:', mediaRecorder.mimeType);
+            console.log('Number of audio chunks:', audioChunks.length);
+            
+            // Create audio URL for debugging
+            const audioUrl = URL.createObjectURL(audioBlob);
+            console.log('Audio URL:', audioUrl);
+            
+            // Create audio element and store reference
+            currentAudioElement = new Audio(audioUrl);
+            currentAudioElement.controls = true;
+            currentAudioElement.style.display = 'block';
+            currentAudioElement.style.margin = '10px 0';
+            currentAudioElement.style.width = '100%';
+            currentAudioElement.style.maxWidth = '300px';
+            
+            // Add to status div temporarily
+            statusDiv.innerHTML = `
+                <div>Audio blob size: ${audioBlob.size} bytes</div>
+                <div>Audio chunks: ${audioChunks.length}</div>
+                <div>Debug playback:</div>
+            `;
+            statusDiv.appendChild(currentAudioElement);
+            statusDiv.innerHTML += '<div>Transcribing...</div>';
+            
+            const formData = new FormData();
+            formData.append('audio', audioBlob, 'recording.webm');
+            
+            try {
+                const response = await fetch('/transcribe', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const result = await response.json();
+                displayResults(result);
+                
+                // Update status to show completion while preserving audio element
+                if (currentAudioElement) {
+                    statusDiv.innerHTML = '<div>Transcription complete! Recorded audio:</div>';
+                    statusDiv.appendChild(currentAudioElement);
+                } else {
+                    statusDiv.textContent = 'Transcription complete!';
+                }
+                statusDiv.className = 'status success';
+                
+            } catch (error) {
+                console.error('Error transcribing audio:', error);
+                
+                // Update status to show error while preserving audio element
+                if (currentAudioElement) {
+                    statusDiv.innerHTML = '<div>Error: Failed to transcribe audio. Please try again. Recorded audio:</div>';
+                    statusDiv.appendChild(currentAudioElement);
+                    statusDiv.className = 'status error';
+                } else {
+                    statusDiv.textContent = 'Error: Failed to transcribe audio. Please try again.';
+                    statusDiv.className = 'status error';
+                }
+            }
+        }
+
+
+
+        function displayResults(result) {
+            // Display transcription
+            document.getElementById('transcription').textContent = result.transcription || 'No transcription available';
+            
+            // Display pauses
+            const pausesDiv = document.getElementById('pauses');
+            pausesDiv.innerHTML = '';
+            if (result.pauses && result.pauses.length > 0) {
+                result.pauses.forEach(pause => {
+                    const pauseItem = document.createElement('div');
+                    pauseItem.className = 'pause-item';
+                    pauseItem.textContent = `Pause from ${pause.end_prev.toFixed(2)}s to ${pause.start_next.toFixed(2)}s (duration: ${pause.duration.toFixed(2)}s)`;
+                    pausesDiv.appendChild(pauseItem);
+                });
+            } else {
+                pausesDiv.textContent = 'No significant pauses detected.';
+            }
+            
+            // Display commas
+            const commasDiv = document.getElementById('commas');
+            commasDiv.innerHTML = '';
+            if (result.commas && result.commas.length > 0) {
+                result.commas.forEach(comma => {
+                    const commaItem = document.createElement('div');
+                    commaItem.className = 'comma-item';
+                    commaItem.textContent = `Comma in: "${comma.text}" at ${comma.start_time.toFixed(2)}s`;
+                    commasDiv.appendChild(commaItem);
+                });
+            } else {
+                commasDiv.textContent = 'No commas detected.';
+            }
+            
+            // Display fillers
+            const fillersDiv = document.getElementById('fillers');
+            fillersDiv.innerHTML = '';
+            if (result.fillers && result.fillers.length > 0) {
+                result.fillers.forEach(filler => {
+                    const fillerItem = document.createElement('div');
+                    fillerItem.className = 'filler-item';
+                    fillerItem.textContent = `'${filler.word}': ${filler.count} time(s)`;
+                    fillersDiv.appendChild(fillerItem);
+                });
+            } else {
+                fillersDiv.textContent = 'No filler words detected.';
+            }
+            
+            // Display repeated words
+            const repeatedWordsDiv = document.getElementById('repeatedWords');
+            repeatedWordsDiv.innerHTML = '';
+            if (result.repeated_words && Object.keys(result.repeated_words).length > 0) {
+                Object.entries(result.repeated_words).forEach(([word, count]) => {
+                    const wordItem = document.createElement('div');
+                    wordItem.textContent = `'${word}': ${count} time(s)`;
+                    repeatedWordsDiv.appendChild(wordItem);
+                });
+            } else {
+                repeatedWordsDiv.textContent = 'No repeated words detected.';
+            }
+            
+            // Display repeated phrases
+            const repeatedPhrasesDiv = document.getElementById('repeatedPhrases');
+            repeatedPhrasesDiv.innerHTML = '';
+            if (result.repeated_phrases && Object.keys(result.repeated_phrases).length > 0) {
+                Object.entries(result.repeated_phrases).forEach(([phrase, count]) => {
+                    const phraseItem = document.createElement('div');
+                    phraseItem.textContent = `"${phrase}": ${count} time(s)`;
+                    repeatedPhrasesDiv.appendChild(phraseItem);
+                });
+            } else {
+                repeatedPhrasesDiv.textContent = 'No repeated phrases detected.';
+            }
+            
+            resultsDiv.style.display = 'block';
+        }
+    </script>
+</body>
+</html>

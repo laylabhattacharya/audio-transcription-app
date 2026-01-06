@@ -1,56 +1,20 @@
-# Import necessary libraries for audio processing and speech recognition
-import sounddevice as sd  # Library for recording audio from microphone
-import numpy as np  # Library for numerical operations on audio data arrays
-import whisper  # OpenAI's Whisper model for speech-to-text transcription
+
+import sounddevice as sd
+import numpy as np
+import whisper
 from flask import Flask, request, jsonify, send_from_directory
 import io
 import wave
+import ffmpeg
+import tempfile
+import os
+# Import analysis functions from audio_analysis.py
+from audio_analysis import check_pauses, check_fillers, check_repeats
 
-# Define a function to detect pauses in speech based on Whisper's timestamp data
-# This function looks for gaps between spoken segments longer than the threshold
-def check_pauses(segments, pause_threshold=0.5):
-    # Initialize an empty list to store detected pauses
-    pauses = []
-    # Initialize an empty list to store unexpected commas (commas in text without corresponding pauses)
-    commas = []
-    # Loop through each segment starting from the second one
-    for i in range(1, len(segments)):
-        # Calculate the time gap between the end of the previous segment and start of current
-        gap = segments[i]['start'] - segments[i-1]['end']
-        # If the gap is longer than our threshold (0.5 second), consider it a pause
-        if gap > pause_threshold:
-            # Store the pause information: end time of previous, start of next, and gap duration
-            pauses.append((segments[i-1]['end'], segments[i]['start'], gap))
-    # Check each segment for commas in the text
-    for segment in segments:
-        if ',' in segment['text']:
-            # Store the comma information: text snippet and start time
-            commas.append((segment['text'].strip(), segment['start']))
-    # Return the list of detected pauses and commas
-    return pauses, commas
 
-# Define a function to detect filler words in the transcribed text
-# Filler words are common verbal crutches like "um", "like", etc.
-def check_fillers(text):
-    # Define a list of common filler words and phrases to look for
-    fillers = ["um", "uh", "like", "kinda", "sort of", "you know", "i mean", "er", "ah", "so", "well", "actually"]
-    # Initialize an empty list to store found fillers and their counts
-    found_fillers = []
-    # Convert text to lowercase for case-insensitive matching
-    text_lower = text.lower()
-    # Check each filler word in our list
-    for filler in fillers:
-        # If the filler word appears in the text
-        if filler in text_lower:
-            # Count how many times it appears
-            count = text_lower.count(filler)
-            # Add the filler and its count to our results list
-            found_fillers.append((filler, count))
-    # Return the list of found fillers with their counts
-    return found_fillers
+app = Flask(__name__)
 
-# Load the Whisper AI model for speech recognition
-# Using 'small.en' model for better accuracy on English speech
+# Load Whisper model at startup
 print("Loading Whisper model...")
 try:
     model = whisper.load_model("small.en")
@@ -59,34 +23,9 @@ except Exception as e:
     print(f"Failed to load Whisper model: {e}")
     model = None
 
-# Initialize Flask app
-app = Flask(__name__)
-
-@app.route('/test')
-def test_model():
-    if model is None:
-        return jsonify({'error': 'Model not loaded'}), 500
-    
-    # Create a simple test audio signal (1 second of 440Hz sine wave)
-    test_audio = np.sin(2 * np.pi * 440 * np.arange(16000) / 16000).astype(np.float32)
-    
-    try:
-        result = model.transcribe(test_audio, fp16=False)
-        return jsonify({
-            'model_loaded': True,
-            'test_transcription': result['text'].strip(),
-            'test_segments': len(result['segments'])
-        })
-    except Exception as e:
-        return jsonify({'error': f'Model test failed: {str(e)}'}), 500
-
-# Set audio recording parameters
-fs = 16000  # Sample rate: 16,000 samples per second (optimal for speech recognition)
-duration = 30  # Recording duration in seconds
-
 @app.route('/')
 def index():
-    return send_from_directory('.', 'index.html')
+    return send_from_directory('static', 'index.html')
 
 @app.route('/transcribe', methods=['POST'])
 def transcribe_audio():
@@ -103,19 +42,50 @@ def transcribe_audio():
     print(f"Audio file name: {audio_file.filename}")
     print(f"Audio content type: {audio_file.content_type}")
     
-    # Convert audio data to numpy array
-    # Now expecting raw PCM data from browser
+    # Use ffmpeg-python to handle various audio formats
     try:
-        audio_np = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
-        print(f"Raw PCM decoding successful, shape: {audio_np.shape}")
+        # Set ffmpeg path explicitly (winget installs to this location)
+        ffmpeg_path = r"C:\Users\layla\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.0.1-full_build\bin\ffmpeg.exe"
+        
+        # Write audio data to temporary file
+        with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as temp_file:
+            temp_file.write(audio_data)
+            temp_file_path = temp_file.name
+        
+        try:
+            # Use ffmpeg to convert to WAV format that we can easily read
+            wav_temp = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+            wav_temp.close()
+            
+            # Convert WebM to WAV using ffmpeg with explicit path
+            stream = ffmpeg.input(temp_file_path)
+            stream = ffmpeg.output(stream, wav_temp.name, acodec='pcm_s16le', ac=1, ar=16000)
+            ffmpeg.run(stream, cmd=ffmpeg_path, overwrite_output=True, quiet=True)
+            
+            # Read the WAV file
+            import wave
+            with wave.open(wav_temp.name, 'rb') as wav_file:
+                frames = wav_file.readframes(wav_file.getnframes())
+                audio_np = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+            
+            print(f"Audio loaded and converted successfully: {len(audio_np)} samples, 16000Hz, mono")
+            print(f"Audio converted to numpy array, shape: {audio_np.shape}")
+            
+            # Clean up WAV temp file
+            os.unlink(wav_temp.name)
+            
+        finally:
+            # Clean up WebM temp file
+            os.unlink(temp_file_path)
+        
     except Exception as e:
-        print(f"PCM decoding failed: {e}")
-        return jsonify({'error': 'Could not decode PCM audio data'}), 400
+        print(f"Audio decoding failed: {e}")
+        return jsonify({'error': f'Could not decode audio data: {str(e)}'}), 400
     
     print(f"Audio numpy array shape: {audio_np.shape}")
     print(f"Audio numpy array dtype: {audio_np.dtype}")
     print(f"Audio numpy array min/max: {audio_np.min():.6f} / {audio_np.max():.6f}")
-    print(f"Audio duration estimate: {len(audio_np) / fs:.2f} seconds")
+    print(f"Audio duration estimate: {len(audio_np) / 16000:.2f} seconds")
     
     # Validate audio data
     if len(audio_np) == 0:
@@ -124,15 +94,6 @@ def transcribe_audio():
     if audio_np.max() - audio_np.min() < 0.001:
         print("WARNING: Audio appears to be silence or very quiet")
         return jsonify({'error': 'Audio appears to be silence or too quiet to transcribe'}), 400
-    
-    # Ensure audio is mono and at correct sample rate
-    if len(audio_np.shape) > 1:
-        print(f"Converting stereo to mono, original shape: {audio_np.shape}")
-        audio_np = np.mean(audio_np, axis=1)  # Convert to mono
-    
-    # Check if we need to resample (Whisper expects 16kHz)
-    # For now, assume browser audio is already at 16kHz, but add logging
-    print(f"Final audio shape: {audio_np.shape}, sample rate assumed: {fs}Hz")
     
     # Additional validation: check for actual audio content
     # Calculate RMS to detect if there's meaningful audio
@@ -190,14 +151,17 @@ def transcribe_audio():
     # Analyze filler words
     fillers = check_fillers(text)
     
+    # Detect repeated words/phrases
+    repeated_words, repeated_phrases = check_repeats(text)
     # Prepare response
     response = {
         'transcription': text,
         'pauses': [{'end_prev': end_prev, 'start_next': start_next, 'duration': duration} for end_prev, start_next, duration in pauses],
         'commas': [{'text': text_snippet, 'start_time': start_time} for text_snippet, start_time in commas],
-        'fillers': [{'word': filler, 'count': count} for filler, count in fillers]
+        'fillers': [{'word': filler, 'count': count} for filler, count in fillers],
+        'repeated_words': repeated_words,
+        'repeated_phrases': repeated_phrases
     }
-    
     return jsonify(response)
 
 def main_cli():
