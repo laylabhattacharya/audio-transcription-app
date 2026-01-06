@@ -99,7 +99,7 @@
 </head>
 <body>
     <div class="container">
-        <h1>Audio Transcription App</h1>
+        <h1>Audio Transcription Apps</h1>
         <p>This app records your speech and transcribes it using AI, then analyzes it for pauses, commas, and filler words.</p>
         
         <div style="background-color: #e8f4fd; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
@@ -121,7 +121,7 @@
         <div id="results" class="results" style="display: none;">
             <div class="result-section">
                 <h3>Transcription</h3>
-                <p id="transcription"></p>
+                <div id="transcription"></div>
             </div>
             
             <div class="result-section">
@@ -138,12 +138,20 @@
                 <h3>Filler Words</h3>
                 <div id="fillers"></div>
             </div>
+            
+            <div class="result-section">
+                <h3>Repeated Words</h3>
+                <div id="repeatedWords"></div>
+            </div>
+            
+            <div class="result-section">
+                <h3>Repeated Phrases</h3>
+                <div id="repeatedPhrases"></div>
+            </div>
         </div>
     </div>
 
     <script>
-        let recorderNode;
-        let recordedChunks = [];
         let currentAudioElement = null;
         let audioContext;
         let analyser;
@@ -151,6 +159,8 @@
         let animationId;
         let isRecording = false;
         let currentStream = null;
+        let audioChunks = [];
+        let mediaRecorder = null;
 
         const recordButton = document.getElementById('recordButton');
         const stopButton = document.getElementById('stopButton');
@@ -158,47 +168,64 @@
         const statusDiv = document.getElementById('status');
         const resultsDiv = document.getElementById('results');
 
-        recordButton.addEventListener('click', startRecording);
+        // Clear any previous status on page load
+        statusDiv.textContent = '';
+        statusDiv.className = 'status';
+
+        recordButton.addEventListener('click', () => {
+            // Clear any previous status messages before starting
+            statusDiv.textContent = '';
+            statusDiv.className = 'status';
+            startRecording();
+        });
         stopButton.addEventListener('click', stopRecording);
         testButton.addEventListener('click', startTestRecording);
 
         async function startRecording() {
+            console.log('startRecording called');
             try {
                 // Clear any previous audio element
                 currentAudioElement = null;
                 
+                console.log('Requesting microphone access...');
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 currentStream = stream; // Store reference to stop later
+                console.log('Microphone access granted successfully');
                 
-                // Use Web Audio API for raw PCM capture instead of MediaRecorder
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                const source = audioContext.createMediaStreamSource(stream);
+                // Clear any previous error messages and show success
+                statusDiv.innerHTML = '<div style="color: #4CAF50; font-weight: bold;">✅ Microphone access granted! Starting recording...</div>';
+                statusDiv.className = 'status success';
                 
-                // Create a ScriptProcessorNode for raw audio data capture
-                recorderNode = audioContext.createScriptProcessor(4096, 1, 1);
-                recorderNode.onaudioprocess = function(event) {
-                    if (isRecording) {
-                        const inputBuffer = event.inputBuffer;
-                        const inputData = inputBuffer.getChannelData(0);
-                        // Convert to 16-bit PCM
-                        const pcmData = new Int16Array(inputData.length);
-                        for (let i = 0; i < inputData.length; i++) {
-                            pcmData[i] = Math.max(-32768, Math.min(32767, inputData[i] * 32768));
-                        }
-                        recordedChunks.push(new Uint8Array(pcmData.buffer));
+                // Small delay to show the success message
+                await new Promise(resolve => setTimeout(resolve, 800));
+                
+                // Try to use MediaRecorder with proper format for raw audio
+                let mimeType = '';
+                if (MediaRecorder.isTypeSupported('audio/wav')) {
+                    mimeType = 'audio/wav';
+                } else if (MediaRecorder.isTypeSupported('audio/webm;codecs=pcm')) {
+                    mimeType = 'audio/webm;codecs=pcm';
+                } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+                    mimeType = 'audio/webm';
+                }
+                
+                console.log('Using MediaRecorder with mimeType:', mimeType);
+                
+                mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+                console.log('MediaRecorder actual mimeType:', mediaRecorder.mimeType);
+                
+                audioChunks = [];
+                mediaRecorder.ondataavailable = event => {
+                    if (event.data.size > 0) {
+                        audioChunks.push(event.data);
                     }
                 };
                 
-                source.connect(recorderNode);
-                recorderNode.connect(audioContext.destination);
+                mediaRecorder.onstop = () => {
+                    sendAudioToServer();
+                };
                 
-                // Set up analyser for level monitoring
-                analyser = audioContext.createAnalyser();
-                analyser.fftSize = 256;
-                source.connect(analyser);
-                dataArray = new Uint8Array(analyser.frequencyBinCount);
-                
-                recordedChunks = [];
+                mediaRecorder.start();
                 isRecording = true;
                 
                 recordButton.disabled = true;
@@ -214,7 +241,8 @@
                 
             } catch (error) {
                 console.error('Error accessing microphone:', error);
-                statusDiv.textContent = 'Error: Could not access microphone. Please check permissions.';
+                console.log('Showing error message to user');
+                statusDiv.textContent = 'Error: Could not access microphone. Please check permissions and try again.';
                 statusDiv.className = 'status error';
             }
         }
@@ -238,17 +266,16 @@
             if (isRecording) {
                 isRecording = false;
                 
+                // Stop MediaRecorder
+                if (mediaRecorder && mediaRecorder.state === 'recording') {
+                    mediaRecorder.stop();
+                }
+                
                 // Stop all audio tracks
                 if (currentStream) {
                     currentStream.getTracks().forEach(track => track.stop());
                     currentStream = null;
                 }
-                
-                // Clean up audio context
-                if (audioContext) {
-                    audioContext.close();
-                }
-                cancelAnimationFrame(animationId);
                 
                 recordButton.disabled = false;
                 recordButton.classList.remove('recording');
@@ -257,8 +284,6 @@
                 
                 statusDiv.textContent = 'Processing audio...';
                 statusDiv.className = 'status';
-                
-                sendAudioToServer();
             }
         }
 
@@ -271,21 +296,14 @@
         }
 
         async function sendAudioToServer() {
-            // Combine all recorded chunks into a single PCM buffer
-            const totalLength = recordedChunks.reduce((sum, chunk) => sum + chunk.length, 0);
-            const pcmBuffer = new Uint8Array(totalLength);
-            let offset = 0;
-            for (const chunk of recordedChunks) {
-                pcmBuffer.set(chunk, offset);
-                offset += chunk.length;
-            }
+            const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+            console.log('Audio blob size:', audioBlob.size, 'bytes');
+            console.log('Audio blob type:', audioBlob.type);
+            console.log('MediaRecorder mimeType:', mediaRecorder.mimeType);
+            console.log('Number of audio chunks:', audioChunks.length);
             
-            console.log('PCM buffer size:', pcmBuffer.length, 'bytes');
-            console.log('Number of chunks:', recordedChunks.length);
-            
-            // Create audio URL for debugging (convert PCM to WAV for browser playback)
-            const wavBlob = createWAVBlob(pcmBuffer);
-            const audioUrl = URL.createObjectURL(wavBlob);
+            // Create audio URL for debugging
+            const audioUrl = URL.createObjectURL(audioBlob);
             console.log('Audio URL:', audioUrl);
             
             // Create audio element and store reference
@@ -298,16 +316,15 @@
             
             // Add to status div temporarily
             statusDiv.innerHTML = `
-                <div>PCM buffer size: ${pcmBuffer.length} bytes</div>
-                <div>Chunks: ${recordedChunks.length}</div>
+                <div>Audio blob size: ${audioBlob.size} bytes</div>
+                <div>Audio chunks: ${audioChunks.length}</div>
                 <div>Debug playback:</div>
             `;
             statusDiv.appendChild(currentAudioElement);
             statusDiv.innerHTML += '<div>Transcribing...</div>';
             
             const formData = new FormData();
-            // Send raw PCM data
-            formData.append('audio', new Blob([pcmBuffer]), 'recording.pcm');
+            formData.append('audio', audioBlob, 'recording.webm');
             
             try {
                 const response = await fetch('/transcribe', {
@@ -346,47 +363,7 @@
             }
         }
 
-        // Helper function to create WAV blob from PCM data for browser playback
-        function createWAVBlob(pcmData) {
-            const sampleRate = 16000; // Assuming 16kHz
-            const numChannels = 1;
-            const bytesPerSample = 2;
-            const blockAlign = numChannels * bytesPerSample;
-            const byteRate = sampleRate * blockAlign;
-            const dataSize = pcmData.length * bytesPerSample;
-            const bufferSize = 44 + dataSize;
-            
-            const buffer = new ArrayBuffer(bufferSize);
-            const view = new DataView(buffer);
-            
-            // WAV header
-            const writeString = (offset, string) => {
-                for (let i = 0; i < string.length; i++) {
-                    view.setUint8(offset + i, string.charCodeAt(i));
-                }
-            };
-            
-            writeString(0, 'RIFF');
-            view.setUint32(4, bufferSize - 8, true);
-            writeString(8, 'WAVE');
-            writeString(12, 'fmt ');
-            view.setUint32(16, 16, true); // Subchunk1Size
-            view.setUint16(20, 1, true); // AudioFormat (PCM)
-            view.setUint16(22, numChannels, true);
-            view.setUint32(24, sampleRate, true);
-            view.setUint32(28, byteRate, true);
-            view.setUint16(32, blockAlign, true);
-            view.setUint16(34, bytesPerSample * 8, true);
-            writeString(36, 'data');
-            view.setUint32(40, dataSize, true);
-            
-            // PCM data
-            for (let i = 0; i < pcmData.length; i++) {
-                view.setInt16(44 + i * 2, pcmData[i], true);
-            }
-            
-            return new Blob([buffer], { type: 'audio/wav' });
-        }
+
 
         function displayResults(result) {
             // Display transcription
@@ -432,6 +409,32 @@
                 });
             } else {
                 fillersDiv.textContent = 'No filler words detected.';
+            }
+            
+            // Display repeated words
+            const repeatedWordsDiv = document.getElementById('repeatedWords');
+            repeatedWordsDiv.innerHTML = '';
+            if (result.repeated_words && Object.keys(result.repeated_words).length > 0) {
+                Object.entries(result.repeated_words).forEach(([word, count]) => {
+                    const wordItem = document.createElement('div');
+                    wordItem.textContent = `'${word}': ${count} time(s)`;
+                    repeatedWordsDiv.appendChild(wordItem);
+                });
+            } else {
+                repeatedWordsDiv.textContent = 'No repeated words detected.';
+            }
+            
+            // Display repeated phrases
+            const repeatedPhrasesDiv = document.getElementById('repeatedPhrases');
+            repeatedPhrasesDiv.innerHTML = '';
+            if (result.repeated_phrases && Object.keys(result.repeated_phrases).length > 0) {
+                Object.entries(result.repeated_phrases).forEach(([phrase, count]) => {
+                    const phraseItem = document.createElement('div');
+                    phraseItem.textContent = `"${phrase}": ${count} time(s)`;
+                    repeatedPhrasesDiv.appendChild(phraseItem);
+                });
+            } else {
+                repeatedPhrasesDiv.textContent = 'No repeated phrases detected.';
             }
             
             resultsDiv.style.display = 'block';
