@@ -27,7 +27,7 @@
             margin: 20px 0;
         }
         button {
-            background-color: #4CAF50;
+            background-color: #da190b;
             border: none;
             color: white;
             padding: 15px 32px;
@@ -41,17 +41,17 @@
             transition: background-color 0.3s;
         }
         button:hover {
-            background-color: #45a049;
+            background-color: #da190b;
         }
         button:disabled {
             background-color: #cccccc;
             cursor: not-allowed;
         }
         #recordButton {
-            background-color: #f44336;
+            background-color: #4CAF50;
         }
         #recordButton:hover {
-            background-color: #da190b;
+            background-color: #4CAF50;
         }
         #recordButton.recording {
             background-color: #ff9800;
@@ -99,16 +99,8 @@
 </head>
 <body>
     <div class="container">
-        <h1>Audio Transcription Apps</h1>
+        <h1>Audio Transcription App</h1>
         <p>This app records your speech and transcribes it using AI, then analyzes it for pauses, commas, and filler words.</p>
-        
-        <div style="background-color: #e8f4fd; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
-            <h3>Debugging Information:</h3>
-            <p><strong>Test the model:</strong> <a href="/test" target="_blank">Click here</a> to test if the Whisper model is working</p>
-            <p><strong>Check browser console</strong> (F12) for detailed audio capture logs</p>
-            <p><strong>Audio levels</strong> should show values > 0 when speaking</p>
-            <p><strong>Audio playback</strong> should let you hear what was recorded</p>
-        </div>
         
         <div class="controls">
             <button id="recordButton">Start Recording</button>
